@@ -33,7 +33,7 @@ export class ClaimService {
     return state;
   }
 
-  private empty(id: string): ClaimState { return { id, policyId: '', status: 'reported', lossAt: '', reportedAt: '', channel: '', participants: [], loss: { currency: 'CNY', gross: 0 }, evidence: [], requiredEvidence: new Set(), completedSurveys: [], pendingDocuments: [], riskSignals: [], riskScore: 0, payments: [], approvedMinor: 0, audit: [], processedEventIds: new Set(), version: 0 }; }
+  private empty(id: string): ClaimState { return { id, policyId: '', status: 'reported', lossAt: '', reportedAt: '', channel: '', participants: [], loss: { currency: 'CNY', gross: 0 }, evidence: [], requiredEvidence: new Set(), completedSurveys: [], pendingDocuments: [], riskSignals: [], riskScore: 0, payments: [], adjustments: [], approvedMinor: 0, audit: [], processedEventIds: new Set(), version: 0 }; }
   private assertExists(id: string): void { if (this.events.list(id).length === 0) throw new Error(`unknown claim ${id}`); }
 
   private apply(state: ClaimState, event: DomainEvent): void {
@@ -47,6 +47,22 @@ export class ClaimService {
     if (event.type === 'documents.received') { state.pendingDocuments = state.pendingDocuments.filter((kind) => !(payload.kinds ?? []).includes(kind)); if (!state.pendingDocuments.length) state.status = 'ready_for_adjustment'; }
     if (event.type === 'survey.completed') { state.completedSurveys = [...new Set([...state.completedSurveys, payload.taskId])]; }
     if (event.type === 'risk.assessed') { state.riskSignals = payload.signals; state.riskScore = payload.score; }
+    if (event.type === 'adjustment.trialed') {
+      // Trials are append-only: the original result stays stored verbatim so
+      // later liability changes or manual re-adjustments can be diffed.
+      const trial = {
+        version: state.adjustments.length + 1,
+        occurredAt: event.occurredAt,
+        actor: payload.actor ?? event.actor,
+        trigger: payload.trigger,
+        source: payload.source ?? payload.trigger,
+        basedOnVersion: payload.basedOnVersion,
+        result: payload.result,
+      };
+      state.adjustments = [...state.adjustments, trial];
+      state.approvedMinor = payload.result.totals.insurerBorneMinor;
+      state.status = 'ready_for_adjustment';
+    }
     if (event.type === 'adjustment.approved') { state.approvedMinor = payload.approvedMinor; state.requiredEvidence = new Set(payload.requiredEvidence); state.status = 'ready_for_adjustment'; }
     if (event.type === 'payment.settled' || event.type === 'payment.reversed') { state.payments = [...state.payments, payload.payment]; state.status = payload.payment.kind === 'reversal' ? 'reopened' : 'partially_paid'; }
     if (event.type === 'claim.reopened') state.status = 'reopened';

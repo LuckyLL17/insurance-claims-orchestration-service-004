@@ -4,9 +4,10 @@ import { PaymentService } from '../application/payment-service';
 import { RiskService } from '../application/risk-service';
 import { TaskService } from '../application/task-service';
 import { ReplayService } from '../application/replay-service';
+import { AdjustmentService } from '../application/adjustment-service';
 import { RuleEngine } from '../domain/rules';
 
-export interface AppContext { claims: ClaimService; payments: PaymentService; risks: RiskService; tasks: TaskService; replay: ReplayService; rules: RuleEngine; }
+export interface AppContext { claims: ClaimService; payments: PaymentService; risks: RiskService; tasks: TaskService; replay: ReplayService; rules: RuleEngine; adjustments: AdjustmentService; }
 const json = (res: ServerResponse, status: number, value: unknown) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value, (_k, v) => v instanceof Set ? [...v] : v)); };
 const body = async (req: IncomingMessage): Promise<any> => { let data = ''; for await (const chunk of req) data += chunk; return data ? JSON.parse(data) : {}; };
 const parts = (url: string) => url.split('?')[0].split('/').filter(Boolean);
@@ -24,6 +25,8 @@ export async function route(req: IncomingMessage, res: ServerResponse, app: AppC
     if (method === 'POST' && path[2] === 'events') return json(res, 200, app.claims.addEvent(id, input.type, input.payload, input.actor ?? 'api', input.idempotencyKey, input.occurredAt));
     if (method === 'POST' && path[2] === 'risk') return json(res, 200, app.risks.assess(id, 'api'));
     if (method === 'GET' && path[2] === 'risk') return json(res, 200, { relatedClaims: app.risks.related(id), state: app.claims.get(id) });
+    if (method === 'POST' && path[2] === 'adjustments') return json(res, 201, app.adjustments.trial(id, input, input.actor ?? 'api', req.headers['idempotency-key'] as string));
+    if (method === 'GET' && path[2] === 'adjustments') { const state = app.claims.get(id); return json(res, 200, { trials: state.adjustments, latest: state.adjustments.at(-1) ?? null }); }
     if (method === 'POST' && path[2] === 'payments') return json(res, 200, app.payments.settle(id, input, 'api'));
     if (method === 'POST' && path[2] === 'reversals') return json(res, 200, app.payments.reverse(id, input, 'api'));
     if (method === 'POST' && path[2] === 'tasks') return json(res, 201, app.tasks.create(id, input.kind));

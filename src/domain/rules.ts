@@ -1,5 +1,6 @@
 import { ClaimState, RuleSnapshot } from './types';
 import { newId } from './ids';
+import { calculateAdjustment, defaultPartyInputs } from './adjustment';
 
 export interface RuleDefinition { id: string; version: string; priority: number; enabled: boolean; evaluate: (claim: ClaimState) => string | undefined; }
 export interface RuleDecision { approvedMinor: number; requiredEvidence: string[]; signals: { code: string; score: number; explanation: string }[]; reasons: string[]; }
@@ -36,15 +37,28 @@ export class RuleEngine {
       ? [{ code: 'LARGE_LOSS', score: 25, explanation: 'gross loss exceeds manual review threshold' }]
       : [];
     const grossMinor = Math.round(claim.loss.gross * 100);
-    const deductibleMinor = claim.policy?.deductibleMinor ?? 0;
-    const policyLimit = claim.policy?.limitMinor ?? 0;
-    const liabilityShare = claim.loss.liabilityShare ?? 1;
-    const inverseLiabilityShare = Math.max(0, Math.min(1, 1 - liabilityShare));
-    const liabilityMinor = Math.round(grossMinor * (1 + inverseLiabilityShare));
-    const cappedMinor = Math.min(grossMinor, policyLimit);
-    const afterDeductible = Math.max(0, cappedMinor - deductibleMinor);
-    const approvedMinor = Math.max(0, Math.min(afterDeductible, liabilityMinor, policyLimit));
-    const reasonsWithCalculation = [...reasons, `calculation:gross=${grossMinor}`, `calculation:deductible=${deductibleMinor}`, `calculation:liability=${liabilityMinor}`];
+    // Single-claim quick trial: reuse the same ordered, conserved calculation
+    // as multi-party adjustment (apportion -> deductible -> cap -> residual),
+    // so this number can never go negative or exceed the policy limit.
+    const trial = calculateAdjustment({
+      currency: claim.loss.currency,
+      grossLossMinor: grossMinor,
+      parties: defaultPartyInputs(claim.loss, claim.policy),
+    });
+    const selfLine = trial.parties.find((party) => party.role === 'insured') ?? trial.parties[0];
+    const deductibleMinor = selfLine.deductibleAppliedMinor;
+    const liabilityMinor = selfLine.apportionedMinor;
+    const approvedMinor = selfLine.insurerBorneMinor;
+    const reasonsWithCalculation = [
+      ...reasons,
+      `calculation:gross=${grossMinor}`,
+      `calculation:liability=${liabilityMinor}`,
+      `calculation:deductible=${deductibleMinor}`,
+      `calculation:capOverflow=${selfLine.capOverflowMinor}`,
+      `calculation:roundingResidual=${selfLine.residualUnits}`,
+      `calculation:approved=${approvedMinor}`,
+      `calculation:conserved=${trial.conservation.balanced}`,
+    ];
     return { approvedMinor, requiredEvidence, signals, reasons: reasonsWithCalculation };
   }
 

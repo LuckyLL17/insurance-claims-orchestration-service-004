@@ -23,6 +23,8 @@ export async function route(req: IncomingMessage, res: ServerResponse, app: AppC
     if (method === 'POST' && path[2] === 'evidence') return json(res, 201, app.claims.addEvidence(id, input, 'api', req.headers['idempotency-key'] as string));
     if (method === 'POST' && path[2] === 'events') return json(res, 200, app.claims.addEvent(id, input.type, input.payload, input.actor ?? 'api', input.idempotencyKey, input.occurredAt));
     if (method === 'POST' && path[2] === 'risk') return json(res, 200, app.risks.assess(id, 'api'));
+    if (method === 'POST' && (path[2] === 'adjustment' || path[2] === 'adjustments') && path.length === 4 && path[3] === 'trial') return json(res, 200, app.claims.calculateAdjustment(id, input));
+    if (method === 'POST' && (path[2] === 'adjustment' || path[2] === 'adjustments') && (path.length === 3 || path.length === 4 && path[3] === 'approve')) return json(res, 200, app.claims.approveAdjustment(id, input, 'api', req.headers['idempotency-key'] as string, input.reason));
     if (method === 'GET' && path[2] === 'risk') return json(res, 200, { relatedClaims: app.risks.related(id), state: app.claims.get(id) });
     if (method === 'POST' && path[2] === 'payments') return json(res, 200, app.payments.settle(id, input, 'api'));
     if (method === 'POST' && path[2] === 'reversals') return json(res, 200, app.payments.reverse(id, input, 'api'));

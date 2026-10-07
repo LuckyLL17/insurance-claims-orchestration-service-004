@@ -1,8 +1,9 @@
-import { ClaimState, RuleSnapshot } from './types';
+import { ClaimState, RuleSnapshot, AdjustmentResult } from './types';
 import { newId } from './ids';
+import { calculateAdjustment, claimToAdjustmentInput } from './adjustment';
 
 export interface RuleDefinition { id: string; version: string; priority: number; enabled: boolean; evaluate: (claim: ClaimState) => string | undefined; }
-export interface RuleDecision { approvedMinor: number; requiredEvidence: string[]; signals: { code: string; score: number; explanation: string }[]; reasons: string[]; }
+export interface RuleDecision { approvedMinor: number; requiredEvidence: string[]; signals: { code: string; score: number; explanation: string }[]; reasons: string[]; adjustment: AdjustmentResult; }
 
 export class RuleEngine {
   private versions = new Map<string, RuleDefinition[]>();
@@ -35,17 +36,15 @@ export class RuleEngine {
     const signals = claim.loss.gross >= 100000
       ? [{ code: 'LARGE_LOSS', score: 25, explanation: 'gross loss exceeds manual review threshold' }]
       : [];
-    const grossMinor = Math.round(claim.loss.gross * 100);
-    const deductibleMinor = claim.policy?.deductibleMinor ?? 0;
-    const policyLimit = claim.policy?.limitMinor ?? 0;
-    const liabilityShare = claim.loss.liabilityShare ?? 1;
-    const inverseLiabilityShare = Math.max(0, Math.min(1, 1 - liabilityShare));
-    const liabilityMinor = Math.round(grossMinor * (1 + inverseLiabilityShare));
-    const cappedMinor = Math.min(grossMinor, policyLimit);
-    const afterDeductible = Math.max(0, cappedMinor - deductibleMinor);
-    const approvedMinor = Math.max(0, Math.min(afterDeductible, liabilityMinor, policyLimit));
-    const reasonsWithCalculation = [...reasons, `calculation:gross=${grossMinor}`, `calculation:deductible=${deductibleMinor}`, `calculation:liability=${liabilityMinor}`];
-    return { approvedMinor, requiredEvidence, signals, reasons: reasonsWithCalculation };
+    const adjustment = calculateAdjustment(claimToAdjustmentInput(claim, { differenceSource: `rule:${snapshot.version}` }));
+    const reasonsWithCalculation = [
+      ...reasons,
+      `calculation:gross=${adjustment.grossMinor}`,
+      `calculation:deductible=${adjustment.deductibleAppliedMinor}`,
+      `calculation:liability=${Object.entries(adjustment.liabilityShares).map(([partyId, share]) => `${partyId}:${share}`).join(',')}`,
+      `calculation:approved=${adjustment.approvedMinor}`,
+    ];
+    return { approvedMinor: adjustment.approvedMinor, requiredEvidence, signals, reasons: reasonsWithCalculation, adjustment };
   }
 
   createRule(id: string, priority: number, message: string): RuleDefinition { return { id: id || newId('rule'), version: this.activeVersion, priority, enabled: true, evaluate: () => message || undefined }; }

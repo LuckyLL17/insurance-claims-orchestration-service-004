@@ -1,3 +1,5 @@
+export * from './domain/adjustment';
+export * from './domain/types';
 import { EventStore } from './application/event-store';
 import { ClaimService } from './application/claim-service';
 import { PaymentService } from './application/payment-service';
